@@ -70,23 +70,31 @@ class GenerationPipeline:
             seed = secure_randint(0, 10000)
         set_random_seed(seed)
 
-        # 1. left view
-        left_image_edited = self.qwen_edit.edit_image(
+        # 0. Preprocess: Enhance and deblur the base image first
+        logger.info("Preprocessing: Enhancing and deblurring base image...")
+        enhanced_image = self.qwen_edit.edit_image(
             prompt_image=image,
+            seed=seed,
+            prompt="Remove blur. Sharpen all details. Enhance image clarity. Fix out-of-focus areas. Remove noise. Keep original colors and content. Do not change the object or viewpoint.",
+        )
+
+        # 1. left view (using enhanced image)
+        left_image_edited = self.qwen_edit.edit_image(
+            prompt_image=enhanced_image,
             seed=seed,
             prompt="Show this object in left three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
         )
 
-        # right view
+        # right view (using enhanced image)
         right_image_edited = self.qwen_edit.edit_image(
-            prompt_image=image,
+            prompt_image=enhanced_image,
             seed=seed,
             prompt="Show this object in right three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
         )
 
         # back view
         # back_image_edited = self.qwen_edit.edit_image(
-        #     prompt_image=image,
+        #     prompt_image=enhanced_image,
         #     seed=seed,
         #     prompt="Show this object in back three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
         # )
@@ -95,7 +103,7 @@ class GenerationPipeline:
         left_image_without_background = self.rmbg.remove_background(left_image_edited)
         right_image_without_background = self.rmbg.remove_background(right_image_edited)
         # back_image_without_background = self.rmbg.remove_background(back_image_edited)
-        original_image_without_background = self.rmbg.remove_background(image)
+        original_image_without_background = self.rmbg.remove_background(enhanced_image)
 
         return [
             left_image_without_background,

@@ -188,6 +188,7 @@ async def run_champion_generation(
     except asyncio.TimeoutError:
         logger.warning(f"⏱️ Judging timeout after {remaining_time:.2f}s. Returning current best: Candidate {best_idx+1}")
     
+    
     final_ply_bytes = candidates[best_idx].ply_file
     selected_seed = seed
     total_time = time.time() - generation_start
