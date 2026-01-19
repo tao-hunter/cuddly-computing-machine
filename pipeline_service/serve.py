@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
     temp_image = Image.new("RGB", (64, 64), color=(128, 128, 128))
     buffer = io.BytesIO()
     temp_image.save(buffer, format="PNG")
-    temp_imge_bytes = buffer.getvalue()
-    await run_champion_generation(temp_imge_bytes, -1)
+    temp_image_bytes = buffer.getvalue()
+    await run_champion_generation(temp_image_bytes, -1)
     pipeline._clean_gpu_memory()
     try:
         yield

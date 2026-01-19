@@ -89,9 +89,8 @@ class BackgroundRemovalService:
                     has_alpha=True
             
             if has_alpha:
-                # If the image has alpha channel, return the image
-                output = image
-                
+                # If the image has alpha channel, return the image as-is
+                image_without_background = image
             else:
                 # PIL.Image (H, W, C) C=3
                 rgb_image = image.convert('RGB')
@@ -127,36 +126,40 @@ class BackgroundRemovalService:
         # Get bounding box indices
         bbox_indices = torch.argwhere(mask > 0.8)
         if len(bbox_indices) == 0:
-            crop_args = dict(top = 0, left = 0, height = mask.shape[1], width = mask.shape[0])
-        else:
-            h_min, h_max = torch.aminmax(bbox_indices[:, 1])
-            w_min, w_max = torch.aminmax(bbox_indices[:, 0])
-            width, height = w_max - w_min, h_max - h_min
-            center =  (h_max + h_min) / 2, (w_max + w_min) / 2
-            size = max(width, height)
-            padded_size_factor = 1 + self.padding_percentage
-            size = int(size * padded_size_factor)
-            top = int(center[1] - size // 2)
-            left = int(center[0] - size // 2)
-            bottom = int(center[1] + size // 2)
-            right = int(center[0] + size // 2)
-
-            if self.limit_padding:
-                top = max(0, top)
-                left = max(0, left)
-                bottom = min(mask.shape[1], bottom)
-                right = min(mask.shape[0], right)
-
-            crop_args = dict(
-                top=top,
-                left=left,
-                height=bottom - top,
-                width=right - left
-            )
-
+            # No foreground detected, return full image with alpha channel
             mask = mask.unsqueeze(0)
-            # Concat mask with image and blacken the background: (C=3, H, W) | (1, H, W) -> (C=4, H, W)
-            tensor_rgba = torch.cat([image_tensor*mask, mask], dim=-3)
-            output = resized_crop(tensor_rgba, **crop_args, size = self.output_size, antialias=False)
+            tensor_rgba = torch.cat([image_tensor, mask], dim=-3)
+            output = resized_crop(tensor_rgba, top=0, left=0, height=mask.shape[1], width=mask.shape[2], size=self.output_size, antialias=False)
             return output
+        
+        h_min, h_max = torch.aminmax(bbox_indices[:, 1])
+        w_min, w_max = torch.aminmax(bbox_indices[:, 0])
+        width, height = w_max - w_min, h_max - h_min
+        center = (h_max + h_min) / 2, (w_max + w_min) / 2
+        size = max(width, height)
+        padded_size_factor = 1 + self.padding_percentage
+        size = int(size * padded_size_factor)
+        top = int(center[1] - size // 2)
+        left = int(center[0] - size // 2)
+        bottom = int(center[1] + size // 2)
+        right = int(center[0] + size // 2)
+
+        if self.limit_padding:
+            top = max(0, top)
+            left = max(0, left)
+            bottom = min(mask.shape[1], bottom)
+            right = min(mask.shape[0], right)
+
+        crop_args = dict(
+            top=top,
+            left=left,
+            height=bottom - top,
+            width=right - left
+        )
+
+        mask = mask.unsqueeze(0)
+        # Concat mask with image and blacken the background: (C=3, H, W) | (1, H, W) -> (C=4, H, W)
+        tensor_rgba = torch.cat([image_tensor * mask, mask], dim=-3)
+        output = resized_crop(tensor_rgba, **crop_args, size=self.output_size, antialias=False)
+        return output
 

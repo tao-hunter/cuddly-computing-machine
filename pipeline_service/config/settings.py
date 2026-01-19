@@ -64,9 +64,9 @@ class Settings(BaseSettings):
     # Reads as: "if voxels <= max_voxels, use num_candidates"
     candidate_ranges: list[tuple[int, int]] = Field(default=[
         (25000, 3),    # 0-25k voxels → 3 candidates
-        (50000, 2),    # 25k-40k voxels → 2 candidates
-        (10000, 1),    # 40k-50k voxels → 1 candidate
-        # Above 50k → 1 candidate (uses last value)
+        (50000, 2),    # 25k-50k voxels → 2 candidates
+        (100000, 1),   # 50k-100k voxels → 1 candidate
+        # Above 100k → 1 candidate (uses last value)
     ], env="CANDIDATE_RANGES")
     
     # Timeout for generation + judging (seconds)
