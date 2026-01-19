@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     ], env="CANDIDATE_RANGES")
     
     # Timeout for generation + judging (seconds)
-    generation_timeout: int = Field(default=25, env="GENERATION_TIMEOUT")
+    generation_timeout: int = Field(default=30, env="GENERATION_TIMEOUT")
 
     class Config:
         env_file = ".env"

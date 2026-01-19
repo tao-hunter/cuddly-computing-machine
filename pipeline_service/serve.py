@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from io import BytesIO
+from pathlib import Path
 import base64
+import tempfile
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 import pyspz
 from plyfile import PlyData
@@ -16,10 +19,13 @@ from config import settings
 from logger_config import logger
 from schemas import GenerateRequest, GenerateResponse, TrellisRequest, TrellisParams
 from modules import GenerationPipeline
-from modules.duel_manager import DuelManager
+from modules.duel_manager import DuelManager, TEMP_IMAGE_DIR
 from modules.utils import secure_randint, set_random_seed
 from PIL import Image
 import io
+
+# Ensure temp directory exists
+TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 duel_manager = DuelManager(settings)
 pipeline = GenerationPipeline(settings)
@@ -45,6 +51,9 @@ app = FastAPI(
     title=settings.api_title,
     lifespan=lifespan,
 )
+
+# Mount temp directory for serving images to vLLM
+app.mount("/temp", StaticFiles(directory=TEMP_IMAGE_DIR), name="temp")
 
 app.add_middleware(
     CORSMiddleware,

@@ -6,11 +6,14 @@ import torch
 import numpy as np
 from PIL import Image
 from typing import Literal, Tuple, Optional
+from pathlib import Path
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 import time
 import json
 import re
+import uuid
+import tempfile
 from config import settings
 from logger_config import logger
 
@@ -18,6 +21,9 @@ from logger_config import logger
 # Đảm bảo bạn đã đặt code renderers đúng chỗ trong project
 from .renderers.gs_renderer.renderer import Renderer
 from .renderers.ply_loader import PlyLoader
+
+# Temp directory for serving images to vLLM via HTTP
+TEMP_IMAGE_DIR = Path(tempfile.gettempdir()) / "pipeline_vllm_images"
 
 
 # --- CONSTANTS RENDER ---
@@ -61,6 +67,28 @@ class DuelManager:
             api_key=settings.vllm_api_key,
             http_client=httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=10, max_connections=20))
         )
+        # Ensure temp directory exists
+        TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        # Base URL for serving temp images (FastAPI serves /temp)
+        self._temp_base_url = f"http://localhost:{settings.port}/temp"
+
+    def _save_temp_image(self, image_bytes: bytes, prefix: str = "img") -> str:
+        """Save image to temp directory and return HTTP URL for vLLM to fetch."""
+        filename = f"{prefix}_{uuid.uuid4().hex[:8]}.png"
+        filepath = TEMP_IMAGE_DIR / filename
+        filepath.write_bytes(image_bytes)
+        return f"{self._temp_base_url}/{filename}"
+
+    def _cleanup_temp_images(self, urls: list[str]) -> None:
+        """Clean up temp images after use."""
+        for url in urls:
+            try:
+                filename = url.split("/")[-1]
+                filepath = TEMP_IMAGE_DIR / filename
+                if filepath.exists():
+                    filepath.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp image: {e}")
 
     def _render_ply_to_grid_bytes(self, ply_bytes: bytes, device: torch.device) -> Optional[bytes]:
         """Render PLY bytes thành PNG bytes (Grid 2x2)"""
@@ -137,18 +165,19 @@ class DuelManager:
         
         return rendered_images
 
-    async def _call_vllm(self, prompt_b64: str, img1_b64: str, img2_b64: str) -> JudgeResponse:
+    async def _call_vllm(self, prompt_url: str, img1_url: str, img2_url: str) -> JudgeResponse:
+        """Call vLLM with image URLs instead of base64 to avoid token limits."""
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Image prompt to generate 3D model:"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{prompt_b64}"}},
+                    {"type": "image_url", "image_url": {"url": prompt_url}},
                     {"type": "text", "text": "First 3D model (4 different views):"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img1_b64}"}},
+                    {"type": "image_url", "image_url": {"url": img1_url}},
                     {"type": "text", "text": "Second 3D model (4 different views):"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img2_b64}"}},
+                    {"type": "image_url", "image_url": {"url": img2_url}},
                     {"type": "text", "text": USER_PROMPT_IMAGE},
                 ],
             },
@@ -168,7 +197,7 @@ class DuelManager:
                 model=self.settings.vllm_model_name,
                 messages=messages,
                 temperature=0.0,
-                max_tokens=32, 
+                max_tokens=128,
                 response_format=response_format,
             )
             end = time.time()
@@ -224,38 +253,43 @@ class DuelManager:
             logger.error("Render failed, cannot judge.")
             return 0, "Render Failure"
 
-        # 2. Prepare Base64
-        prompt_b64 = base64.b64encode(prompt_bytes).decode('utf-8').strip()
-        render1_b64 = base64.b64encode(img1_bytes).decode('utf-8').strip()
-        render2_b64 = base64.b64encode(img2_bytes).decode('utf-8').strip()
+        # 2. Save images to temp dir and get URLs (avoids token limits)
+        prompt_url = self._save_temp_image(prompt_bytes, "prompt")
+        render1_url = self._save_temp_image(img1_bytes, "render1")
+        render2_url = self._save_temp_image(img2_bytes, "render2")
+        temp_urls = [prompt_url, render1_url, render2_url]
 
-        # 3. Position-Balanced Duel (Đấu 2 lượt đảo vị trí)
-        logger.info("Asking Judge (vLLM)...")
-        res_direct, res_swapped = await asyncio.gather(
-            self._call_vllm(prompt_b64, render1_b64, render2_b64),
-            self._call_vllm(prompt_b64, render2_b64, render1_b64)
-        )
+        try:
+            # 3. Position-Balanced Duel (Đấu 2 lượt đảo vị trí)
+            logger.info("Asking Judge (vLLM) via image URLs...")
+            res_direct, res_swapped = await asyncio.gather(
+                self._call_vllm(prompt_url, render1_url, render2_url),
+                self._call_vllm(prompt_url, render2_url, render1_url)
+            )
 
-        # Tính toán điểm (Direct: P1 vs P2 | Swapped: P2 vs P1)
-        # Seed 1 là P1 ở lượt 1, và là P2 ở lượt 2
-        # Handle both dict and JudgeResponse objects
-        if isinstance(res_direct, JudgeResponse):
-            score1 = (res_direct.penalty_1 + res_swapped.penalty_2) / 2
-            logger.info(f"Score 1: direct {res_direct.penalty_1} swapped {res_swapped.penalty_2} score {score1}")
-            score2 = (res_swapped.penalty_1 + res_direct.penalty_2) / 2
-            logger.info(f"Score 2: direct {res_swapped.penalty_1} swapped {res_direct.penalty_2} score {score2}")
-            issues = f"Direct: {res_direct.issues} | Swapped: {res_swapped.issues}"
-        else:
-            score1 = (res_direct.get('penalty_1', 0) + res_swapped.get('penalty_2', 0)) / 2
-            logger.info(f"Score 1: direct {res_direct.get('penalty_1', 0)} swapped {res_swapped.get('penalty_2', 0)} score {score1}")
-            score2 = (res_swapped.get('penalty_1', 0) + res_direct.get('penalty_2', 0)) / 2
-            logger.info(f"Score 2: direct {res_swapped.get('penalty_1', 0)} swapped {res_direct.get('penalty_2', 0)} score {score2}")
-            issues = f"Direct: {res_direct.get('issues', '')} | Swapped: {res_swapped.get('issues', '')}"
+            # Tính toán điểm (Direct: P1 vs P2 | Swapped: P2 vs P1)
+            # Seed 1 là P1 ở lượt 1, và là P2 ở lượt 2
+            # Handle both dict and JudgeResponse objects
+            if isinstance(res_direct, JudgeResponse):
+                score1 = (res_direct.penalty_1 + res_swapped.penalty_2) / 2
+                logger.info(f"Score 1: direct {res_direct.penalty_1} swapped {res_swapped.penalty_2} score {score1}")
+                score2 = (res_swapped.penalty_1 + res_direct.penalty_2) / 2
+                logger.info(f"Score 2: direct {res_swapped.penalty_1} swapped {res_direct.penalty_2} score {score2}")
+                issues = f"Direct: {res_direct.issues} | Swapped: {res_swapped.issues}"
+            else:
+                score1 = (res_direct.get('penalty_1', 0) + res_swapped.get('penalty_2', 0)) / 2
+                logger.info(f"Score 1: direct {res_direct.get('penalty_1', 0)} swapped {res_swapped.get('penalty_2', 0)} score {score1}")
+                score2 = (res_swapped.get('penalty_1', 0) + res_direct.get('penalty_2', 0)) / 2
+                logger.info(f"Score 2: direct {res_swapped.get('penalty_1', 0)} swapped {res_direct.get('penalty_2', 0)} score {score2}")
+                issues = f"Direct: {res_direct.get('issues', '')} | Swapped: {res_swapped.get('issues', '')}"
 
-        if score1 < score2:
-            return -1, issues # Seed 1 Wins (Penalty thấp hơn)
-        else:
-            return 1, issues # Seed 2 Wins
+            if score1 < score2:
+                return -1, issues # Seed 1 Wins (Penalty thấp hơn)
+            else:
+                return 1, issues # Seed 2 Wins
+        finally:
+            # Cleanup temp images
+            self._cleanup_temp_images(temp_urls)
 
     async def run_duel_prerendered(self, prompt_bytes: bytes, img1_bytes: bytes, img2_bytes: bytes) -> Tuple[int, str]:
         """
@@ -267,33 +301,38 @@ class DuelManager:
             logger.error("Invalid image bytes provided.")
             return 0, "Invalid Input"
 
-        # Prepare Base64
-        prompt_b64 = base64.b64encode(prompt_bytes).decode('utf-8').strip()
-        render1_b64 = base64.b64encode(img1_bytes).decode('utf-8').strip()
-        render2_b64 = base64.b64encode(img2_bytes).decode('utf-8').strip()
+        # Save images to temp dir and get URLs (avoids token limits)
+        prompt_url = self._save_temp_image(prompt_bytes, "prompt")
+        render1_url = self._save_temp_image(img1_bytes, "render1")
+        render2_url = self._save_temp_image(img2_bytes, "render2")
+        temp_urls = [prompt_url, render1_url, render2_url]
 
-        # Position-Balanced Duel (Đấu 2 lượt đảo vị trí)
-        logger.info("Asking Judge (vLLM)...")
-        res_direct, res_swapped = await asyncio.gather(
-            self._call_vllm(prompt_b64, render1_b64, render2_b64),
-            self._call_vllm(prompt_b64, render2_b64, render1_b64)
-        )
+        try:
+            # Position-Balanced Duel (Đấu 2 lượt đảo vị trí)
+            logger.info("Asking Judge (vLLM) via image URLs...")
+            res_direct, res_swapped = await asyncio.gather(
+                self._call_vllm(prompt_url, render1_url, render2_url),
+                self._call_vllm(prompt_url, render2_url, render1_url)
+            )
 
-        # Tính toán điểm
-        if isinstance(res_direct, JudgeResponse):
-            score1 = (res_direct.penalty_1 + res_swapped.penalty_2) / 2
-            logger.info(f"Score 1: direct {res_direct.penalty_1} swapped {res_swapped.penalty_2} score {score1}")
-            score2 = (res_swapped.penalty_1 + res_direct.penalty_2) / 2
-            logger.info(f"Score 2: direct {res_swapped.penalty_1} swapped {res_direct.penalty_2} score {score2}")
-            issues = f"Direct: {res_direct.issues} | Swapped: {res_swapped.issues}"
-        else:
-            score1 = (res_direct.get('penalty_1', 0) + res_swapped.get('penalty_2', 0)) / 2
-            logger.info(f"Score 1: direct {res_direct.get('penalty_1', 0)} swapped {res_swapped.get('penalty_2', 0)} score {score1}")
-            score2 = (res_swapped.get('penalty_1', 0) + res_direct.get('penalty_2', 0)) / 2
-            logger.info(f"Score 2: direct {res_swapped.get('penalty_1', 0)} swapped {res_direct.get('penalty_2', 0)} score {score2}")
-            issues = f"Direct: {res_direct.get('issues', '')} | Swapped: {res_swapped.get('issues', '')}"
+            # Tính toán điểm
+            if isinstance(res_direct, JudgeResponse):
+                score1 = (res_direct.penalty_1 + res_swapped.penalty_2) / 2
+                logger.info(f"Score 1: direct {res_direct.penalty_1} swapped {res_swapped.penalty_2} score {score1}")
+                score2 = (res_swapped.penalty_1 + res_direct.penalty_2) / 2
+                logger.info(f"Score 2: direct {res_swapped.penalty_1} swapped {res_direct.penalty_2} score {score2}")
+                issues = f"Direct: {res_direct.issues} | Swapped: {res_swapped.issues}"
+            else:
+                score1 = (res_direct.get('penalty_1', 0) + res_swapped.get('penalty_2', 0)) / 2
+                logger.info(f"Score 1: direct {res_direct.get('penalty_1', 0)} swapped {res_swapped.get('penalty_2', 0)} score {score1}")
+                score2 = (res_swapped.get('penalty_1', 0) + res_direct.get('penalty_2', 0)) / 2
+                logger.info(f"Score 2: direct {res_swapped.get('penalty_1', 0)} swapped {res_direct.get('penalty_2', 0)} score {score2}")
+                issues = f"Direct: {res_direct.get('issues', '')} | Swapped: {res_swapped.get('issues', '')}"
 
-        if score1 < score2:
-            return -1, issues # Image 1 Wins
-        else:
-            return 1, issues # Image 2 Wins
+            if score1 < score2:
+                return -1, issues # Image 1 Wins
+            else:
+                return 1, issues # Image 2 Wins
+        finally:
+            # Cleanup temp images
+            self._cleanup_temp_images(temp_urls)
