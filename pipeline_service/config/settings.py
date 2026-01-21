@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     qwen_edit_lora_repo: str = Field(default="lightx2v/Qwen-Image-Edit-2511-Lightning",env="QWEN_EDIT_LORA_REPO")
     qwen_edit_height: int = Field(default=1024, env="QWEN_EDIT_HEIGHT")
     qwen_edit_width: int = Field(default=1024, env="QWEN_EDIT_WIDTH")
-    num_inference_steps: int = Field(default=24, env="NUM_INFERENCE_STEPS")
+    num_inference_steps: int = Field(default=12, env="NUM_INFERENCE_STEPS")
     true_cfg_scale: float = Field(default=1.0, env="TRUE_CFG_SCALE")
     qwen_edit_prompt_path: Path = Field(default=config_dir.joinpath("qwen_edit_prompt.json"), env="QWEN_EDIT_PROMPT_PATH")
     
