@@ -83,11 +83,13 @@ class GenerationPipeline:
         enhanced_image = image
 
         # 1. left view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
+        # Format: <sks> [azimuth] [elevation] [distance]
+        # Using elevated shot (30° down) for better 3D reconstruction
         logger.info("Generating left view with Multiple-Angles LoRA...")
         left_image_edited = self.qwen_edit.edit_image(
             prompt_image=enhanced_image,
             seed=seed,
-            prompt=f"<sks> left side view eye-level shot medium shot.",
+            prompt="<sks> left side view elevated shot medium shot",
         )
 
         # right view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
@@ -95,7 +97,7 @@ class GenerationPipeline:
         right_image_edited = self.qwen_edit.edit_image(
             prompt_image=enhanced_image,
             seed=seed,
-            prompt=f"<sks> right side view eye-level shot medium shot.",
+            prompt="<sks> right side view elevated shot medium shot",
         )
 
         # back view - Using <sks> syntax for Multiple-Angles LoRA
@@ -103,7 +105,7 @@ class GenerationPipeline:
         back_image_edited = self.qwen_edit.edit_image(
             prompt_image=enhanced_image,
             seed=seed,
-            prompt=f"<sks> back view eye-level shot medium shot.",
+            prompt="<sks> back view elevated shot medium shot",
         )
 
         # 2. Remove background

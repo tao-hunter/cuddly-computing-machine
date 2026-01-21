@@ -41,14 +41,14 @@ class Settings(BaseSettings):
     qwen_edit_lora_repo: str = Field(default="lightx2v/Qwen-Image-Edit-2511-Lightning",env="QWEN_EDIT_LORA_REPO")
     qwen_edit_height: int = Field(default=1024, env="QWEN_EDIT_HEIGHT")
     qwen_edit_width: int = Field(default=1024, env="QWEN_EDIT_WIDTH")
-    num_inference_steps: int = Field(default=8, env="NUM_INFERENCE_STEPS")
+    num_inference_steps: int = Field(default=12, env="NUM_INFERENCE_STEPS")
     true_cfg_scale: float = Field(default=1.0, env="TRUE_CFG_SCALE")
     qwen_edit_prompt_path: Path = Field(default=config_dir.joinpath("qwen_edit_prompt.json"), env="QWEN_EDIT_PROMPT_PATH")
     
     # Multiple-Angles LoRA settings for view generation
     use_multiangle_lora: bool = Field(default=True, env="USE_MULTIANGLE_LORA")
     multiangle_lora_repo: str = Field(default="fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", env="MULTIANGLE_LORA_REPO")
-    multiangle_lora_weight: float = Field(default=1.0, env="MULTIANGLE_LORA_WEIGHT")
+    multiangle_lora_weight: float = Field(default=0.9, env="MULTIANGLE_LORA_WEIGHT")
 
     # Background removal settings (using rembg)
     # Available models: u2net, u2netp, u2net_human_seg, u2net_cloth_seg, silueta, isnet-general-use, isnet-anime, sam
