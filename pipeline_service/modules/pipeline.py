@@ -70,46 +70,53 @@ class GenerationPipeline:
             seed = secure_randint(0, 10000)
         set_random_seed(seed)
 
-        # 0. Preprocess: Enhance and deblur the base image first
-        logger.info("Preprocessing: Enhancing and deblurring base image...")
-        enhanced_image = self.qwen_edit.edit_image(
-            prompt_image=image,
-            seed=seed,
-            prompt="Remove blur. Sharpen all details. Enhance image clarity. Fix out-of-focus areas. Remove noise. Keep original colors and content. Do not change the object or viewpoint.",
-        )
+        # Quality suffix for all prompts
+        quality_suffix = ", ultradetailed, 8K resolution, photorealistic, crisp sharp focus, high definition, masterpiece quality, intricate details visible, perfect clarity"
+        
+        # 0. Preprocess: Enhance and deblur to preserve sub-objects and attached parts
+        # logger.info("Preprocessing: Enhancing and deblurring to preserve all object details...")
+        # enhanced_image = self.qwen_edit.edit_image(
+        #     prompt_image=image,
+        #     seed=seed,
+        #     prompt=f"Enhance this image to maximum sharpness and clarity. Make every detail crisp and well-defined. Restore all fine textures, edges, and small features. Fix any soft or out-of-focus areas. Preserve all original colors and structure{quality_suffix}",
+        # )
+        enhanced_image = image
 
-        # 1. left view (using enhanced image)
-        left_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
-            seed=seed,
-            prompt="Show this object in left three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
-        )
+        # 1. left view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
+        logger.info("Generating left view with Multiple-Angles LoRA...")
+        # left_image_edited = self.qwen_edit.edit_image(
+        #     prompt_image=enhanced_image,
+        #     seed=seed,
+        #     prompt=f"<sks> left side view eye-level shot medium shot.",
+        # )
 
-        # right view (using enhanced image)
+        # right view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
+        logger.info("Generating right view with Multiple-Angles LoRA...")
         right_image_edited = self.qwen_edit.edit_image(
             prompt_image=enhanced_image,
             seed=seed,
-            prompt="Show this object in right three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
+            prompt=f"<sks> right side view eye-level shot medium shot.",
         )
 
-        # back view
-        # back_image_edited = self.qwen_edit.edit_image(
-        #     prompt_image=enhanced_image,
-        #     seed=seed,
-        #     prompt="Show this object in back three-quarters view and make sure it is fully visible. Turn background neutral solid color contrasting with an object. Delete background details. Delete watermarks. Keep object colors. Sharpen image details",
-        # )
+        # back view - Using <sks> syntax for Multiple-Angles LoRA
+        logger.info("Generating back view with Multiple-Angles LoRA...")
+        back_image_edited = self.qwen_edit.edit_image(
+            prompt_image=enhanced_image,
+            seed=seed,
+            prompt=f"<sks> back view eye-level shot medium shot.",
+        )
 
         # 2. Remove background
-        left_image_without_background = self.rmbg.remove_background(left_image_edited)
+        # left_image_without_background = self.rmbg.remove_background(left_image_edited)
         right_image_without_background = self.rmbg.remove_background(right_image_edited)
-        # back_image_without_background = self.rmbg.remove_background(back_image_edited)
+        back_image_without_background = self.rmbg.remove_background(back_image_edited)
         original_image_without_background = self.rmbg.remove_background(enhanced_image)
 
         return [
-            left_image_without_background,
-            right_image_without_background,
-            # back_image_without_background,
+            # left_image_without_background,
             original_image_without_background,
+            right_image_without_background,
+            back_image_without_background,
         ]
 
     # --- HÀM CỐT LÕI 2: CHẠY TRELLIS (CHẠY NHIỀU LẦN VỚI SEED KHÁC NHAU) ---

@@ -68,10 +68,19 @@ class QwenManager:
         scheduler = FlowMatchEulerDiscreteScheduler.from_config(self._get_scheduler_config())
         self.pipe = self._get_model_pipe(transformer, scheduler)
 
-        self.pipe.load_lora_weights(
-            self.settings.qwen_edit_lora_repo,
-            weight_name=self.settings.qwen_edit_base_model_path
-        )
+        # Load Multiple-Angles LoRA for better view control (replaces Lightning LoRA)
+        if self.settings.use_multiangle_lora:
+            logger.info(f"Loading Multiple-Angles LoRA from {self.settings.multiangle_lora_repo}...")
+            self.pipe.load_lora_weights(self.settings.multiangle_lora_repo)
+            self.pipe.fuse_lora(lora_scale=self.settings.multiangle_lora_weight)
+            logger.success(f"Multiple-Angles LoRA loaded and fused with weight {self.settings.multiangle_lora_weight}")
+        else:
+            # Fallback to Lightning LoRA if Multiple-Angles is disabled
+            self.pipe.load_lora_weights(
+                self.settings.qwen_edit_lora_repo,
+                weight_name=self.settings.qwen_edit_base_model_path
+            )
+        
         # Move model pipe to device
         self.pipe = self.pipe.to(self.device)
 

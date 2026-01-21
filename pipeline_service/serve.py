@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from io import BytesIO
-from pathlib import Path
 import base64
-import tempfile
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 import pyspz
 from plyfile import PlyData
@@ -19,13 +16,10 @@ from config import settings
 from logger_config import logger
 from schemas import GenerateRequest, GenerateResponse, TrellisRequest, TrellisParams
 from modules import GenerationPipeline
-from modules.duel_manager import DuelManager, TEMP_IMAGE_DIR
+from modules.duel_manager import DuelManager
 from modules.utils import secure_randint, set_random_seed
 from PIL import Image
 import io
-
-# Ensure temp directory exists
-TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 duel_manager = DuelManager(settings)
 pipeline = GenerationPipeline(settings)
@@ -51,9 +45,6 @@ app = FastAPI(
     title=settings.api_title,
     lifespan=lifespan,
 )
-
-# Mount temp directory for serving images to vLLM
-app.mount("/temp", StaticFiles(directory=TEMP_IMAGE_DIR), name="temp")
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,11 +83,7 @@ async def run_champion_generation(
     # START TIMER: Begin when Qwen editing starts
     generation_start = time.time()
     
-    (
-        left_image_without_background,
-        right_image_without_background,
-        original_image_without_background,
-    ) = await pipeline.prepare_input_images(image_bytes, seed)
+    processed_images = await pipeline.prepare_input_images(image_bytes, seed)
 
     from schemas import TrellisRequest, TrellisParams
     params = TrellisParams.from_settings(settings)
@@ -104,7 +91,7 @@ async def run_champion_generation(
     # STAGE 1: Generate max_candidates shape candidates
     logger.info(f"🎲 STAGE 1: Generating {settings.max_candidates} shape candidates...")
     trellis_req = TrellisRequest(
-        images=[left_image_without_background, right_image_without_background, original_image_without_background],
+        images=processed_images,
         seed=seed,
         params=params,
     )
@@ -188,7 +175,7 @@ async def run_champion_generation(
     except asyncio.TimeoutError:
         logger.warning(f"⏱️ Judging timeout after {remaining_time:.2f}s. Returning current best: Candidate {best_idx+1}")
     
-    
+
     final_ply_bytes = candidates[best_idx].ply_file
     selected_seed = seed
     total_time = time.time() - generation_start
