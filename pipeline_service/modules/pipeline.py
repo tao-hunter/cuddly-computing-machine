@@ -92,11 +92,11 @@ class GenerationPipeline:
 
         # right view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
         logger.info("Generating right view with Multiple-Angles LoRA...")
-        right_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
-            seed=seed,
-            prompt=f"<sks> right side view eye-level shot medium shot.",
-        )
+        # right_image_edited = self.qwen_edit.edit_image(
+        #     prompt_image=enhanced_image,
+        #     seed=seed,
+        #     prompt=f"<sks> right side view eye-level shot medium shot.",
+        # )
 
         # back view - Using <sks> syntax for Multiple-Angles LoRA
         logger.info("Generating back view with Multiple-Angles LoRA...")
@@ -108,14 +108,14 @@ class GenerationPipeline:
 
         # 2. Remove background
         left_image_without_background = self.rmbg.remove_background(left_image_edited)
-        right_image_without_background = self.rmbg.remove_background(right_image_edited)
+        # right_image_without_background = self.rmbg.remove_background(right_image_edited)
         # back_image_without_background = self.rmbg.remove_background(back_image_edited)
         original_image_without_background = self.rmbg.remove_background(enhanced_image)
 
         return [
             original_image_without_background,
             left_image_without_background,
-            right_image_without_background,
+            # right_image_without_background,
             # back_image_without_background,
         ]
 
