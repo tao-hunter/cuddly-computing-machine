@@ -75,20 +75,20 @@ class GenerationPipeline:
         
         # 0. Preprocess: Enhance and deblur to preserve sub-objects and attached parts
         # logger.info("Preprocessing: Enhancing and deblurring to preserve all object details...")
-        # enhanced_image = self.qwen_edit.edit_image(
-        #     prompt_image=image,
-        #     seed=seed,
-        #     prompt=f"Enhance this image to maximum sharpness and clarity. Make every detail crisp and well-defined. Restore all fine textures, edges, and small features. Fix any soft or out-of-focus areas. Preserve all original colors and structure{quality_suffix}",
-        # )
-        enhanced_image = image
+        enhanced_image = self.qwen_edit.edit_image(
+            prompt_image=image,
+            seed=seed,
+            prompt=f"Enhance this image to maximum sharpness and clarity. Make every detail crisp and well-defined. Restore all fine textures, edges, and small features. Fix any soft or out-of-focus areas. Preserve all original colors and structure{quality_suffix}",
+        )
+        # enhanced_image = image
 
         # 1. left view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
         logger.info("Generating left view with Multiple-Angles LoRA...")
-        left_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
-            seed=seed,
-            prompt=f"<sks> left side view eye-level shot medium shot.",
-        )
+        # left_image_edited = self.qwen_edit.edit_image(
+        #     prompt_image=enhanced_image,
+        #     seed=seed,
+        #     prompt=f"<sks> left side view eye-level shot medium shot.",
+        # )
 
         # right view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
         logger.info("Generating right view with Multiple-Angles LoRA...")
@@ -107,14 +107,14 @@ class GenerationPipeline:
         # )
 
         # 2. Remove background
-        left_image_without_background = self.rmbg.remove_background(left_image_edited)
+        # left_image_without_background = self.rmbg.remove_background(left_image_edited)
         # right_image_without_background = self.rmbg.remove_background(right_image_edited)
         # back_image_without_background = self.rmbg.remove_background(back_image_edited)
         original_image_without_background = self.rmbg.remove_background(enhanced_image)
 
         return [
             original_image_without_background,
-            left_image_without_background,
+            # left_image_without_background,
             # right_image_without_background,
             # back_image_without_background,
         ]
