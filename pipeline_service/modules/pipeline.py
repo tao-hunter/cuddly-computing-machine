@@ -99,18 +99,21 @@ class GenerationPipeline:
         )
         
         # Zero123++ outputs at azimuths: 30°, 90°, 150°, 210°, 270°, 330°
-        # Select best views for 3D: original + left (270°) + right (90°) + back area (150° or 210°)
-        selected_views = [
+        # Use all 6 views + original for maximum 3D coverage (7 images total)
+        all_views = [
             image,      # Original front view
-            views[4],   # 270° - left side
-            views[1],   # 90° - right side  
+            views[0],   # 30° - front-right
+            views[1],   # 90° - right side
             views[2],   # 150° - back-right
+            views[3],   # 210° - back-left
+            views[4],   # 270° - left side
+            views[5],   # 330° - front-left
         ]
         
         # Remove background from all views
-        logger.info("Removing backgrounds from generated views...")
+        logger.info(f"Removing backgrounds from {len(all_views)} views...")
         processed = []
-        for i, view in enumerate(selected_views):
+        for view in all_views:
             processed.append(self.rmbg.remove_background(view))
         
         return processed
