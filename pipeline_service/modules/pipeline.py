@@ -21,6 +21,7 @@ from schemas import (
 from modules.image_edit.qwen_edit_module import QwenEditModule
 from modules.background_removal.rmbg_manager import BackgroundRemovalService
 from modules.gs_generator.trellis_manager import TrellisService
+from modules.multiview.zero123_manager import Zero123PlusService
 from modules.utils import (
     secure_randint,
     set_random_seed,
@@ -33,24 +34,34 @@ from modules.utils import (
 class GenerationPipeline:
     def __init__(self, settings: Settings = settings):
         self.settings = settings
-        self.qwen_edit = QwenEditModule(settings)
+        self.qwen_edit = QwenEditModule(settings) if not settings.use_zero123 else None
+        self.zero123 = Zero123PlusService(settings) if settings.use_zero123 else None
         self.rmbg = BackgroundRemovalService(settings)
         self.trellis = TrellisService(settings)
 
     async def startup(self) -> None:
         logger.info("Starting pipeline")
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
-        await self.qwen_edit.startup()
+        
+        # Load view generator (Zero123++ or Qwen)
+        if self.settings.use_zero123:
+            await self.zero123.startup()
+            logger.info("Using Zero123++ for multi-view generation")
+        else:
+            await self.qwen_edit.startup()
+            logger.info("Using Qwen + Multi-Angles LoRA for view generation")
+        
         await self.rmbg.startup()
         await self.trellis.startup()
-        # logger.info("Warming up generator...")
-        # await self.warmup_generator()
         self._clean_gpu_memory()
         logger.success("Warmup is complete. Pipeline ready to work.")
 
     async def shutdown(self) -> None:
         logger.info("Closing pipeline")
-        await self.qwen_edit.shutdown()
+        if self.zero123:
+            await self.zero123.shutdown()
+        if self.qwen_edit:
+            await self.qwen_edit.shutdown()
         await self.rmbg.shutdown()
         await self.trellis.shutdown()
         logger.info("Pipeline closed.")
@@ -62,63 +73,83 @@ class GenerationPipeline:
     # --- HÀM CỐT LÕI 1: CHUẨN BỊ ẢNH (CHỈ CHẠY 1 LẦN) ---
     async def prepare_input_images(
         self, image_bytes: bytes, seed: int = 42
-    ) -> tuple[Image.Image, Image.Image]:
-        """Chạy Qwen và RMBG để tạo view. Tách rời để dùng lại cho nhiều seed Trellis."""
+    ) -> list[Image.Image]:
+        """Generate multi-view images and remove backgrounds."""
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         image = decode_image(image_base64)
         if seed < 0:
             seed = secure_randint(0, 10000)
         set_random_seed(seed)
 
-        # Quality suffix for all prompts
-        # quality_suffix = ", ultradetailed, 8K resolution, photorealistic, crisp sharp focus, high definition, masterpiece quality, intricate details visible, perfect clarity"
-        
-        # 0. Preprocess: Enhance and deblur to preserve sub-objects and attached parts
-        # logger.info("Preprocessing: Enhancing and deblurring to preserve all object details...")
-        # enhanced_image = self.qwen_edit.edit_image(
-        #     prompt_image=image,
-        #     seed=seed,
-        #     prompt=f"Enhance this image to maximum sharpness and clarity. Make every detail crisp and well-defined. Restore all fine textures, edges, and small features. Fix any soft or out-of-focus areas. Preserve all original colors and structure{quality_suffix}",
-        # )
-        enhanced_image = image
+        if self.settings.use_zero123:
+            # Use Zero123++ for faster, more consistent multi-view generation
+            return await self._prepare_with_zero123(image)
+        else:
+            # Use Qwen + Multi-Angles LoRA
+            return await self._prepare_with_qwen(image, seed)
 
-        # 1. left view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
-        # Format: <sks> [azimuth] [elevation] [distance]
-        # Using elevated shot (30° down) for better 3D reconstruction
-        logger.info("Generating left view with Multiple-Angles LoRA...")
-        left_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
+    async def _prepare_with_zero123(self, image: Image.Image) -> list[Image.Image]:
+        """Generate views using Zero123++ (6 views in one pass)."""
+        logger.info("Generating 6 views with Zero123++...")
+        
+        # Generate 6 consistent views in one forward pass
+        views = self.zero123.generate_views(
+            image,
+            num_inference_steps=self.settings.zero123_inference_steps,
+        )
+        
+        # Zero123++ outputs at azimuths: 30°, 90°, 150°, 210°, 270°, 330°
+        # Select best views for 3D: original + left (270°) + right (90°) + back area (150° or 210°)
+        selected_views = [
+            image,      # Original front view
+            views[4],   # 270° - left side
+            views[1],   # 90° - right side  
+            views[2],   # 150° - back-right
+        ]
+        
+        # Remove background from all views
+        logger.info("Removing backgrounds from generated views...")
+        processed = []
+        for i, view in enumerate(selected_views):
+            processed.append(self.rmbg.remove_background(view))
+        
+        return processed
+
+    async def _prepare_with_qwen(self, image: Image.Image, seed: int) -> list[Image.Image]:
+        """Generate views using Qwen + Multi-Angles LoRA."""
+        logger.info("Generating views with Qwen + Multiple-Angles LoRA...")
+        
+        # Generate left view
+        logger.info("Generating left view...")
+        left_image = self.qwen_edit.edit_image(
+            prompt_image=image,
             seed=seed,
             prompt="<sks> left side view elevated shot medium shot",
         )
 
-        # right view (using enhanced image) - Using <sks> syntax for Multiple-Angles LoRA
-        logger.info("Generating right view with Multiple-Angles LoRA...")
-        right_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
+        # Generate right view
+        logger.info("Generating right view...")
+        right_image = self.qwen_edit.edit_image(
+            prompt_image=image,
             seed=seed,
             prompt="<sks> right side view elevated shot medium shot",
         )
 
-        # back view - Using <sks> syntax for Multiple-Angles LoRA
-        logger.info("Generating back view with Multiple-Angles LoRA...")
-        back_image_edited = self.qwen_edit.edit_image(
-            prompt_image=enhanced_image,
+        # Generate back view
+        logger.info("Generating back view...")
+        back_image = self.qwen_edit.edit_image(
+            prompt_image=image,
             seed=seed,
             prompt="<sks> back view elevated shot medium shot",
         )
 
-        # 2. Remove background
-        left_image_without_background = self.rmbg.remove_background(left_image_edited)
-        right_image_without_background = self.rmbg.remove_background(right_image_edited)
-        back_image_without_background = self.rmbg.remove_background(back_image_edited)
-        original_image_without_background = self.rmbg.remove_background(enhanced_image)
-
+        # Remove backgrounds
+        logger.info("Removing backgrounds...")
         return [
-            original_image_without_background,
-            left_image_without_background,
-            right_image_without_background,
-            back_image_without_background,
+            self.rmbg.remove_background(image),
+            self.rmbg.remove_background(left_image),
+            self.rmbg.remove_background(right_image),
+            self.rmbg.remove_background(back_image),
         ]
 
     # --- HÀM CỐT LÕI 2: CHẠY TRELLIS (CHẠY NHIỀU LẦN VỚI SEED KHÁC NHAU) ---

@@ -39,16 +39,21 @@ class Settings(BaseSettings):
     qwen_edit_base_model_path: str = Field(default="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",env="QWEN_EDIT_BASE_MODEL_PATH")
     qwen_edit_model_path: str = Field(default="Qwen/Qwen-Image-Edit-2511",env="QWEN_EDIT_MODEL_PATH")
     qwen_edit_lora_repo: str = Field(default="lightx2v/Qwen-Image-Edit-2511-Lightning",env="QWEN_EDIT_LORA_REPO")
-    qwen_edit_height: int = Field(default=1024, env="QWEN_EDIT_HEIGHT")
-    qwen_edit_width: int = Field(default=1024, env="QWEN_EDIT_WIDTH")
+    qwen_edit_height: int = Field(default=512, env="QWEN_EDIT_HEIGHT")
+    qwen_edit_width: int = Field(default=512, env="QWEN_EDIT_WIDTH")
     num_inference_steps: int = Field(default=12, env="NUM_INFERENCE_STEPS")
     true_cfg_scale: float = Field(default=1.0, env="TRUE_CFG_SCALE")
     qwen_edit_prompt_path: Path = Field(default=config_dir.joinpath("qwen_edit_prompt.json"), env="QWEN_EDIT_PROMPT_PATH")
     
-    # Multiple-Angles LoRA settings for view generation
+    # Multiple-Angles LoRA settings for view generation (used when use_zero123=False)
     use_multiangle_lora: bool = Field(default=True, env="USE_MULTIANGLE_LORA")
     multiangle_lora_repo: str = Field(default="fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", env="MULTIANGLE_LORA_REPO")
     multiangle_lora_weight: float = Field(default=0.9, env="MULTIANGLE_LORA_WEIGHT")
+    
+    # Zero123++ settings for multi-view generation (faster, more consistent)
+    use_zero123: bool = Field(default=True, env="USE_ZERO123")  # Use Zero123++ instead of Qwen for views
+    zero123_model_id: str = Field(default="sudo-ai/zero123plus-v1.2", env="ZERO123_MODEL_ID")
+    zero123_inference_steps: int = Field(default=75, env="ZERO123_INFERENCE_STEPS")
 
     # Background removal settings (using rembg)
     # Available models: u2net, u2netp, u2net_human_seg, u2net_cloth_seg, silueta, isnet-general-use, isnet-anime, sam
